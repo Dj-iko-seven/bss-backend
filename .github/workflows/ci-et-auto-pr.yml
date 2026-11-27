@@ -37,10 +37,10 @@ jobs:
 
     steps:
       - name: Recuperer le code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Configurer Java 21
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           java-version: '21'
           distribution: 'temurin'
@@ -52,7 +52,9 @@ jobs:
           SPRING_DATASOURCE_URL: jdbc:postgresql://localhost:5432/bss_db_test
           SPRING_DATASOURCE_USERNAME: bss_user
           SPRING_DATASOURCE_PASSWORD: test_password
-        run: ./mvnw verify
+        run: |
+          chmod +x ./mvnw
+          ./mvnw verify
 
   auto-pr-et-fusion:
     name: Creer et fusionner PR automatiquement
@@ -61,7 +63,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Recuperer le code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
