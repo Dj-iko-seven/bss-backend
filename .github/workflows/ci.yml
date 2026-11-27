@@ -1,0 +1,115 @@
+name: BSS Backend CI/CD Security & Quality Pipeline
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+  pull_request:
+    branches:
+      - main
+      - develop
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  secret-scan:
+    name: Gitleaks Secret Detection
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Run Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build-test-security-quality:
+    name: Build, Test, OWASP & SonarQube
+    runs-on: ubuntu-latest
+    needs: secret-scan
+    env:
+      HAS_NVD_API_KEY: ${{ secrets.NVD_API_KEY != '' }}
+      HAS_SONAR: ${{ secrets.SONAR_TOKEN != '' && secrets.SONAR_HOST_URL != '' }}
+    services:
+      postgres:
+        image: postgis/postgis:16-3.4-alpine
+        env:
+          POSTGRES_DB: bss_db_test
+          POSTGRES_USER: bss_user
+          POSTGRES_PASSWORD: test_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U bss_user -d bss_db_test"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v5
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: 'maven'
+
+      - name: Cache SonarQube packages
+        uses: actions/cache@v5
+        with:
+          path: ~/.sonar/cache
+          key: ${{ runner.os }}-sonar
+          restore-keys: ${{ runner.os }}-sonar
+
+      - name: Cache OWASP NVD database
+        uses: actions/cache@v5
+        with:
+          path: ~/.m2/repository/org/owasp/dependency-check-data
+          key: ${{ runner.os }}-owasp-nvd-${{ github.run_id }}
+          restore-keys: |
+            ${{ runner.os }}-owasp-nvd-
+
+      - name: Build and Run Unit Tests
+        env:
+          SPRING_PROFILES_ACTIVE: test
+          DB_TEST_URL: jdbc:postgresql://localhost:5432/bss_db_test
+          DB_TEST_USERNAME: bss_user
+          DB_TEST_PASSWORD: test_password
+          DB_PASSWORD: test_password
+        run: mvn -B clean verify
+
+      - name: OWASP Dependency-Check (CVE Audit)
+        if: ${{ env.HAS_NVD_API_KEY == 'true' }}
+        env:
+          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
+        run: >
+          mvn -B org.owasp:dependency-check-maven:check
+          -DfailBuildOnCVSS=7
+          -DnvdApiKey="$NVD_API_KEY"
+
+      - name: OWASP Dependency-Check skipped
+        if: ${{ env.HAS_NVD_API_KEY != 'true' }}
+        run: echo "NVD_API_KEY missing - OWASP dependency-check skipped."
+
+      - name: SonarQube / SonarCloud Analysis
+        if: ${{ env.HAS_SONAR == 'true' }}
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+        run: >
+          mvn -B sonar:sonar
+          -Dsonar.projectKey=Dj-iko-seven_bss-backend
+          -Dsonar.organization=dj-iko-seven
+
+      - name: SonarQube / SonarCloud Analysis skipped
+        if: ${{ env.HAS_SONAR != 'true' }}
+        run: echo "SONAR_TOKEN or SONAR_HOST_URL missing - Sonar analysis skipped."

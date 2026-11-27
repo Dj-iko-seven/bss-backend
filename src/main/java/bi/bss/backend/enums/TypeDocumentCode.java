@@ -1,0 +1,12 @@
+package bi.bss.backend.enums;
+
+public enum TypeDocumentCode {
+    IMAGE_PROFIL,
+    LOGO_ENTREPRISE,
+    DOCUMENT_ENTREPRISE,
+    DOCUMENT_ADMIN_PUBLIC,
+    DOCUMENT_SERVICE_PUBLIC,
+    DOCUMENT_ASSISTANCE,
+    DOCUMENT_SYSTEME,
+    MEDIA_CMS
+}
