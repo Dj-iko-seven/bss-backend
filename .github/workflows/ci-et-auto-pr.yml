@@ -1,0 +1,90 @@
+name: CI Verification & Auto PR
+
+on:
+  push:
+    branches:
+      - dev-seth
+      - dev-benisse
+      - develop
+  pull_request:
+    branches:
+      - develop
+      - main
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  verifier-backend:
+    name: Build, Flyway & Tests
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgis/postgis:16-3.4-alpine
+        env:
+          POSTGRES_DB: bss_db_test
+          POSTGRES_USER: bss_user
+          POSTGRES_PASSWORD: test_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U bss_user -d bss_db_test"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=10
+
+    steps:
+      - name: Recuperer le code
+        uses: actions/checkout@v4
+
+      - name: Configurer Java 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: 'maven'
+
+      - name: Compiler et lancer les tests + Flyway
+        env:
+          SPRING_PROFILES_ACTIVE: test
+          SPRING_DATASOURCE_URL: jdbc:postgresql://localhost:5432/bss_db_test
+          SPRING_DATASOURCE_USERNAME: bss_user
+          SPRING_DATASOURCE_PASSWORD: test_password
+        run: ./mvnw verify
+
+  auto-pr-et-fusion:
+    name: Creer et fusionner PR automatiquement
+    needs: verifier-backend
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Recuperer le code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: PR vers develop puis vers main
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BRANCHE_SOURCE: ${{ github.ref_name }}
+        run: |
+          if [ "$BRANCHE_SOURCE" = "dev-seth" ] || [ "$BRANCHE_SOURCE" = "dev-benisse" ]; then
+            CIBLE="develop"
+          elif [ "$BRANCHE_SOURCE" = "develop" ]; then
+            CIBLE="main"
+          else
+            exit 0
+          fi
+
+          # Creer la PR si elle n'existe pas encore
+          PR_URL=$(gh pr list --base "$CIBLE" --head "$BRANCHE_SOURCE" --state open --json url --jq '.[0].url')
+          if [ -z "$PR_URL" ]; then
+            PR_URL=$(gh pr create --base "$CIBLE" --head "$BRANCHE_SOURCE" \
+              --title "Auto-PR: $BRANCHE_SOURCE -> $CIBLE" \
+              --body "Pull Request generee automatiquement apres validation du build, des migrations Flyway et des tests.")
+          fi
+
+          # Fusionner uniquement s'il n'y a pas de conflit et que la CI est verte
+          gh pr merge "$PR_URL" --merge --auto || gh pr merge "$PR_URL" --merge
